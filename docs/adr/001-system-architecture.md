@@ -7,7 +7,7 @@
 
 ```
 ┌─────────┐       ┌──────────────┐       ┌────────────────┐
-│ Telegram │◄─────►│ Orchestrator │◄─────►│ Agent Runner   │
+│ Channel  │◄─────►│ Orchestrator │◄─────►│ Agent Runner   │
 │ (user)   │       │ (single proc)│       │ (Docker ctnr)  │
 └─────────┘       │   + SQLite   │       │  mounted vol   │
                   └──────────────┘       └────────────────┘
@@ -19,16 +19,22 @@
 
 ### 1. Single-process orchestrator
 
-- Connects to Telegram Bot API
+- Connects to channels via channel interface
 - Manages agent lifecycle (create, monitor, terminate containers)
 - Persists state in embedded SQLite (WAL mode)
 - Communicates with agents through files on a shared volume
 
-### 2. Telegram — only user channel
+### 2. Channel interface
 
-- Send tasks as messages
-- Receive progress updates and results as replies
-- Manage agent sessions through bot commands
+Channels are pluggable. Each channel implements:
+- `start()` — connect and begin receiving messages
+- `stop()` — disconnect
+- `send(chat_id, text)` — send a message to a chat
+- `on_message(callback)` — register handler for incoming messages
+
+Incoming messages normalized to: `{ channel, chat_id, topic_id, sender_id, sender_name, text }`
+
+Telegram is the only channel for now. Others (Slack, Discord, CLI) can be added by implementing the same interface.
 
 ### 3. Docker containers for agents
 

@@ -5,12 +5,15 @@
 
 ## Decision
 
-Telegram Bot API is the only user interface. Bot runs in polling mode (no webhooks needed).
+Telegram is the first channel implementation. Bot API with long polling (no webhooks).
+
+Implements the channel interface defined in ADR-001. Other channels can be added by implementing the same interface.
 
 ### Commands
 
 | Command | Scope | Description |
 |---|---|---|
+| `/chatid` | chat/topic | Reply with current chat ID and topic ID |
 | `/kill` | chat/topic | Stop the running agent in current chat or topic |
 | `/status` | chat/topic | Show agent state for current chat or topic |
 
@@ -30,11 +33,11 @@ No trigger keyword or bot mention required.
 In group chats with topics enabled:
 - Each topic gets its own session and agent container automatically
 - First message in a topic spawns the agent
-- Session ID: `{chat_id}_{topic_id}`
+- Session ID: `telegram_{chat_id}_{topic_id}`
 
 In chats without topics:
 - One session per chat
-- Session ID: `{chat_id}`
+- Session ID: `telegram_{chat_id}`
 
 ### Output format
 

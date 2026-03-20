@@ -6,7 +6,7 @@ Single long-running process. Entry point of the system.
 
 ```
 orchestrator
-├── telegram_bot        # Telegram Bot API polling, message routing
+├── channel             # Channel interface + implementations (telegram, ...)
 ├── session_manager     # Session CRUD, maps chat/topic to container
 ├── container_manager   # Docker spawn, kill, prune
 ├── ipc_watcher         # Polls output/ dirs for agent responses
@@ -23,13 +23,13 @@ orchestrator
 4. Start credential proxy (port 3001)
 5. Start IPC watcher loop (1s interval)
 6. Start prune loop (5min interval)
-7. Connect Telegram bot (start polling)
+7. Start channels (Telegram, ...)
 ```
 
 ## Shutdown (SIGTERM / SIGINT)
 
 ```
-1. Stop Telegram polling
+1. Stop all channels
 2. Write _close to all running agents' input/ dirs
 3. Wait up to 10s for containers to exit
 4. docker kill any remaining containers
@@ -40,13 +40,19 @@ orchestrator
 
 ## Module responsibilities
 
-### telegram_bot
+### channel
 
-- Long-polls Telegram Bot API for updates
-- Checks `allowed_users` and `allowed_chats` tables, drops unauthorized
-- Routes text messages to `session_manager`
-- Handles `/kill` and `/status` commands
-- Sends agent responses back to the correct chat/topic
+Interface for user-facing messaging. Each channel implementation provides:
+- `start()` — connect and begin receiving messages
+- `stop()` — disconnect gracefully
+- `send(chat_id, text)` — deliver message to a chat
+- `on_message(callback)` — incoming message handler
+
+Incoming messages normalized to: `{ channel, chat_id, topic_id, sender_id, sender_name, text }`
+
+Channels handle their own access control (check `allowed_users`, `allowed_chats`), command parsing, and message splitting.
+
+See `docs/components/telegram.md` for the Telegram implementation.
 
 ### session_manager
 
@@ -68,7 +74,7 @@ Container naming: `clawnim-{session_id}`
 
 - Polls `data/ipc/*/output/` directories every 1s
 - Reads `.json` files, parses agent messages
-- Routes `type: "message"` to `telegram_bot` for delivery
+- Routes `type: "message"` to the originating channel for delivery
 - Routes `type: "done"` to `session_manager` to transition session to `stopped`
 - Deletes processed files
 - Moves unparseable files to `data/ipc/errors/`

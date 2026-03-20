@@ -23,7 +23,8 @@ Migration scripts run on startup. Orchestrator compares `schema_version` to expe
 
 ```sql
 CREATE TABLE sessions (
-  id           TEXT PRIMARY KEY,  -- "{chat_id}" or "{chat_id}_{topic_id}"
+  id           TEXT PRIMARY KEY,  -- "{channel}_{chat_id}" or "{channel}_{chat_id}_{topic_id}"
+  channel      TEXT NOT NULL,     -- "telegram", etc.
   chat_id      INTEGER NOT NULL,
   topic_id     INTEGER,           -- NULL if no topics
   container_id TEXT,              -- Docker container ID, NULL if not running

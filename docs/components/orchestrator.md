@@ -14,16 +14,29 @@ orchestrator
 └── db                  # SQLite access layer
 ```
 
+## Configuration
+
+`.env` file:
+```
+TELEGRAM_BOT_TOKEN=...
+ANTHROPIC_API_KEY=...
+MAIN_CHAT_ID=...          # auto-seeds allowed_users + allowed_chats on startup
+DATA_DIR=./data            # default
+CREDENTIAL_PROXY_PORT=3001 # default
+ANTHROPIC_BASE_URL=https://api.anthropic.com  # default
+```
+
 ## Startup sequence
 
 ```
 1. Init DB (run migrations if needed)
-2. Kill orphaned containers from previous run
-3. Reset orphaned sessions to "stopped" in DB
-4. Start credential proxy (port 3001)
-5. Start IPC watcher loop (1s interval)
-6. Start prune loop (5min interval)
-7. Start channels (Telegram, ...)
+2. Seed allowed_users/allowed_chats from MAIN_CHAT_ID if set
+3. Kill orphaned containers from previous run
+4. Reset orphaned sessions to "stopped" in DB
+5. Start credential proxy (port 3001)
+6. Start IPC watcher loop (1s interval)
+7. Start prune loop (5min interval)
+8. Start channels (Telegram, ...)
 ```
 
 ## Shutdown (SIGTERM / SIGINT)
@@ -63,21 +76,31 @@ See `docs/components/telegram.md` for the Telegram implementation.
 
 ### container_manager
 
-- `spawn(session_id)` — `docker run` with volume mounts per agent-runner spec, env vars per ADR-006, `.env` shadowed with `/dev/null`
+- `spawn(session_id)` — `docker run -d` with volume mounts per agent-runner spec, env vars per ADR-006, `.env` shadowed with `/dev/null`. Input JSON mounted as `/tmp/input.json` (not piped via stdin — detached containers cannot receive stdin).
 - `kill(session_id)` — write `_close`, wait 10s, then `docker kill`
+- `remove(session_id)` — `docker rm` after container exits, frees the name for reuse
 - `prune()` — every 5 min, remove containers in `stopped` state older than 30 min
 - On startup: `docker ps --filter name=clawnim-*` to find orphans, kill them
 
 Container naming: `clawnim-{session_id}`
+
+Per-session directory setup before first spawn:
+- `data/sessions/{session_id}/.claude/debug/` — SDK debug logs (must exist or SDK crashes)
+- `data/sessions/{session_id}/.claude/projects/` — SDK project data
+- `data/sessions/{session_id}/group/` — working directory
+- `data/sessions/{session_id}/agent-runner-src/` — seeded from `container/src/` defaults if empty
 
 ### ipc_watcher
 
 - Polls `data/ipc/*/output/` directories every 1s
 - Reads `.json` files, parses agent messages
 - Routes `type: "message"` to the originating channel for delivery
-- Routes `type: "done"` to `session_manager` to transition session to `stopped`
+- Routes `type: "done"` — forwards text to channel. Does NOT stop the session (agent stays alive for follow-ups)
 - Deletes processed files
 - Moves unparseable files to `data/ipc/errors/`
+- Every ~10s, checks for dead containers: if a running session's container has exited, removes it (`docker rm`) and transitions session to `stopped`
+
+See `docs/components/ipc.md` for protocol details.
 
 ### credential_proxy
 

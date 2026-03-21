@@ -1,0 +1,6 @@
+data/
+.env
+nimcache/
+clawnim
+src/clawnim
+*.exe

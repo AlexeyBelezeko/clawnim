@@ -1,108 +1,86 @@
 # Agent Runner
 
-Runs inside the Docker container. Wraps Claude Code SDK, handles IPC with orchestrator.
-Reuses nanoclaw's agent-runner approach.
+Reuses nanoclaw's agent-runner as-is. Source: `container/agent-runner/` in [nanoclaw](https://github.com/qwibitai/nanoclaw).
 
-## Container image
+## What we take from nanoclaw
 
-Base: `node:22-slim`
+Copy these files directly:
 
-Installed:
-- `chromium` + font/rendering deps
-- `curl`, `git`
-- `@anthropic-ai/claude-code` (global)
-- `@anthropic-ai/claude-agent-sdk`
-- `@modelcontextprotocol/sdk`
+| Nanoclaw path | Purpose |
+|---|---|
+| `container/agent-runner/src/index.ts` | Agent entry point, query loop, follow-up polling |
+| `container/agent-runner/src/ipc-mcp-stdio.ts` | MCP server exposing `send_message` tool to Claude Code |
+| `container/Dockerfile` | Container image (node:22-slim + chromium + claude-code + SDK) |
+| `container/agent-runner/package.json` | Dependencies |
+| `container/agent-runner/tsconfig.json` | TypeScript config |
 
-Runs as `node` user (non-root).
+The entrypoint script, Dockerfile, IPC MCP server, and query loop logic should work without modification.
 
-## Entry point
+## Changes needed for clawnim
 
-1. Read stdin — JSON blob with `{ prompt, sessionId }`
-2. Clean up stale `_close` sentinel from previous run
-3. Create `/workspace/ipc/input/` if missing
-4. Drain any pending `input/*.json` files, append to prompt
-5. Enter query loop
+### 1. Input delivery
 
-## Claude Code invocation
+Nanoclaw pipes input via stdin (`echo JSON | docker run -i`). This does not work with `docker run -d` (detached mode) — stdin EOF arrives before the container reads it.
 
-Uses Claude Agent SDK directly (`@anthropic-ai/claude-agent-sdk` `query()` function), not the CLI.
-
-Key options:
-- `cwd`: `/workspace/project` (if mounted) or `/workspace/group`
-- `resume`: previous `sessionId` for session continuity
-- `permissionMode`: `bypassPermissions`
-- `allowedTools`: `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `WebSearch`, `WebFetch`, plus `mcp__clawnim__*`
-- `mcpServers`: registers `clawnim` MCP server for IPC tools
-
-## IPC — MCP server
-
-Separate MCP server process (`ipc-mcp-stdio.ts`) registered with Claude Code SDK via `mcpServers` config. Exposes tools under `clawnim` namespace:
-
-| Tool | Writes to | Purpose |
-|---|---|---|
-| `send_message` | `output/*.json` | Send message to user via Telegram |
-
-All writes atomic (`.tmp` + `rename`).
-
-## Follow-up messages
-
-Orchestrator writes follow-up messages to `input/*.json`.
-
-Agent-runner polls `/workspace/ipc/input/` every 500ms:
-- **During active query**: pushes message into the SDK's `MessageStream`, arrives as new user turn in live conversation
-- **Between queries**: triggers a new `query()` call with session resume
-
-## Session lifecycle
-
-Agent stays alive after completing a query:
-
+**Change:** Orchestrator writes input JSON to a file and mounts it:
 ```
-start -> read stdin -> run query -> idle (poll input/) -> new message -> run query -> ...
-                                                       -> _close      -> exit
+-v {session_dir}/input.json:/tmp/input.json:ro
 ```
 
-No idle timeout inside the container. Orchestrator manages timeout externally.
-
-## Shutdown (_close)
-
-When `_close` file detected in `input/`:
-- During query: ends the `MessageStream`, query finishes, loop exits
-- Between queries: loop breaks immediately
-- Process exits with code 0
-
-## Container filesystem
-
-| Path | Host path | Content | Access |
-|---|---|---|---|
-| `/workspace/ipc/input/` | `data/ipc/{session_id}/input/` | Messages from orchestrator | read |
-| `/workspace/ipc/output/` | `data/ipc/{session_id}/output/` | Messages to orchestrator | write |
-| `/workspace/project/` | project repo root (main chat only) | Project source code | read-only |
-| `/workspace/project/.env` | `/dev/null` | Shadow `.env` to prevent secret leaks | read-only |
-| `/workspace/group/` | `data/sessions/{session_id}/group/` | Per-session working directory | read-write |
-| `/workspace/global/CLAUDE.md` | repo `CLAUDE.md` | Shared agent instructions | read-only |
-| `/workspace/global/skills/` | repo skills directory | Shared skills/prompts | read-only |
-| `/home/node/.claude/` | `data/sessions/{session_id}/.claude/` | Claude session persistence | read-write |
-| `/app/src/` | `data/sessions/{session_id}/agent-runner-src/` | Agent-runner source | read-write |
-
-### Secret isolation
-
-`.env` in project root is shadowed by mounting `/dev/null` over it:
-```
--v /dev/null:/workspace/project/.env:ro
-```
-Agent containers have no access to host secrets. API credentials are injected by the credential proxy (ADR-006).
-
-## Entrypoint script
-
+Entrypoint reads from the mounted file instead of stdin:
 ```bash
-#!/bin/bash
-set -e
-cd /app && npx tsc --outDir /tmp/dist 2>&1 >&2
-ln -s /app/node_modules /tmp/dist/node_modules
-chmod -R a-w /tmp/dist
+# nanoclaw original:
 cat > /tmp/input.json
 node /tmp/dist/index.js < /tmp/input.json
+
+# clawnim change:
+node /tmp/dist/index.js < /tmp/input.json
+# (remove the `cat` line — file is already mounted)
 ```
 
-Recompiles TypeScript on every start. Per-session source is mounted at `/app/src/`, allowing customization per session.
+### 2. SDK session resume
+
+Nanoclaw passes its own group ID as the `resume` session ID. The Claude Agent SDK requires a UUID for `--resume`.
+
+**Change:** Agent-runner must capture the SDK's own `session_id` (UUID) from the first query's result messages and use that for subsequent `resume` calls. Do not pass the clawnim session ID (e.g. `telegram_12345`) to `resume`.
+
+### 3. `.claude` directory structure
+
+The Claude Agent SDK writes debug logs to `/home/node/.claude/debug/`. If the directory doesn't exist, the SDK crashes.
+
+**Change:** Orchestrator must create these subdirectories before first spawn:
+```
+data/sessions/{session_id}/.claude/debug/
+data/sessions/{session_id}/.claude/projects/
+```
+
+### 4. Agent-runner source seeding
+
+Nanoclaw mounts per-group source at `/app/src/`. On first run this directory is empty, which shadows the built-in source files causing TypeScript compilation to fail.
+
+**Change:** Orchestrator copies default source files from `container/agent-runner/src/` into the session's agent-runner-src directory before first spawn, if empty.
+
+### 5. Response streaming
+
+Nanoclaw's agent-runner uses the `send_message` MCP tool for real-time messages to the user. Additionally, the agent-runner should forward SDK `assistant` messages (text content blocks) via IPC `output/*.json` with `type: "message"` so the user sees the agent's responses without relying solely on the MCP tool.
+
+## Volume mounts
+
+| Container path | Host path | Access |
+|---|---|---|
+| `/workspace/ipc/` | `data/ipc/{session_id}/` | rw |
+| `/workspace/project/` | project repo root (main chat only) | ro |
+| `/workspace/project/.env` | `/dev/null` | ro |
+| `/workspace/group/` | `data/sessions/{session_id}/group/` | rw |
+| `/workspace/global/CLAUDE.md` | repo `CLAUDE.md` | ro |
+| `/workspace/global/skills/` | repo skills directory | ro |
+| `/home/node/.claude/` | `data/sessions/{session_id}/.claude/` | rw |
+| `/app/src/` | `data/sessions/{session_id}/agent-runner-src/` | rw |
+| `/tmp/input.json` | `data/sessions/{session_id}/input.json` | ro |
+
+## Container environment
+
+```
+ANTHROPIC_BASE_URL=http://host.docker.internal:{proxy_port}
+ANTHROPIC_API_KEY=placeholder
+```

@@ -39,9 +39,7 @@ All text messages in allowed chats from allowed users are forwarded to `session_
 
 | Command | Response |
 |---|---|
-| `/chatid` | Reply with current chat ID (and topic ID if applicable) |
-| `/kill` | Forward to `session_manager` to stop agent in current chat/topic |
-| `/status` | Forward to `session_manager`, reply with agent state |
+| `/chatid` | Reply with current chat ID, user ID (and topic ID if applicable). Bypasses access control. |
 
 ## Topic support
 

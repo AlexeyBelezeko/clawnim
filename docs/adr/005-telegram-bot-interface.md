@@ -13,9 +13,7 @@ Implements the channel interface defined in ADR-001. Other channels can be added
 
 | Command | Scope | Description |
 |---|---|---|
-| `/chatid` | chat/topic | Reply with current chat ID and topic ID |
-| `/kill` | chat/topic | Stop the running agent in current chat or topic |
-| `/status` | chat/topic | Show agent state for current chat or topic |
+| `/chatid` | any | Reply with current chat ID, user ID, and topic ID. Bypasses access control. |
 
 No admin/user role distinction. All `allowed_users` have equal access.
 

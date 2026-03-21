@@ -44,7 +44,17 @@ Nanoclaw mounts per-group source at `/app/src/`. On first run this directory is 
 
 ### 5. Response streaming
 
-Nanoclaw's agent-runner uses the `send_message` MCP tool for real-time messages to the user. Additionally, the agent-runner should forward SDK assistant messages (text content blocks) via IPC output with `type: "message"` so the user sees the agent's responses without relying solely on the MCP tool.
+The agent-runner forwards SDK assistant messages (text content blocks) via IPC output with `type: "message"`. On query completion, it writes `type: "done"` as a signal only — the orchestrator does NOT forward `done` text to the user since the response was already sent via `type: "message"`.
+
+### 7. Idle timeout
+
+Nanoclaw relies on the orchestrator's group-queue idle timeout (30 min). This is fragile — if the orchestrator misses a dead container, the agent loops forever.
+
+**Change:** Agent-runner itself exits after 30 minutes of no input. The timer resets each time `input/` delivers a message. On timeout, the process writes a final `type: "done"` with `status: "idle_timeout"` to `output/` and exits cleanly. The orchestrator detects the exit via its dead-container check and transitions the session to `stopped`.
+
+### 6. Placeholder API key format
+
+The container receives `ANTHROPIC_API_KEY` with a placeholder value (routed through the credential proxy). The placeholder must look like a real API key (e.g. `sk-ant-api03-placeholder...`) to pass the Claude CLI's local format validation. A literal `placeholder` string will be rejected on session resume.
 
 ## Volume mounts and container environment
 

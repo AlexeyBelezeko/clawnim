@@ -64,7 +64,7 @@ Agent must exit gracefully upon detecting this file.
 
 ### Agent -> Orchestrator (`output/`)
 
-**Agent response** (in-progress update):
+**Agent response** (in-progress update, forwarded to user):
 ```json
 {
   "type": "message",
@@ -73,19 +73,19 @@ Agent must exit gracefully upon detecting this file.
 }
 ```
 
-**Query completion** (current query finished, agent stays alive):
+**Query completion** (signals query finished, NOT forwarded to user):
 ```json
 {
   "type": "done",
-  "text": "All changes committed. Summary: ...",
+  "text": "...",
   "status": "completed"
 }
 ```
 
 ## Semantics
 
-- `type: "message"` — intermediate update, forwarded to user immediately.
-- `type: "done"` — current query finished. **Does not mean the container should stop.** The agent stays alive, polling `input/` for follow-up messages. The orchestrator must NOT transition the session to `stopped` on `done`.
+- `type: "message"` — assistant response, forwarded to user immediately.
+- `type: "done"` — current query finished. The orchestrator must NOT forward `done` text to the user — the response was already delivered via `type: "message"`. The orchestrator must NOT transition the session to `stopped`. The agent stays alive, polling `input/` for follow-up messages.
 - Session transitions to `stopped` only when the container process actually exits. Orchestrator detects this by periodically checking container status.
 
 ## Polling

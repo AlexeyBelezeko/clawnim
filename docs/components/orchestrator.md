@@ -19,25 +19,29 @@ orchestrator
 `.env` file:
 ```
 TELEGRAM_BOT_TOKEN=...
-ANTHROPIC_API_KEY=...
-MAIN_CHAT_ID=...          # auto-seeds allowed_users + allowed_chats on startup
-DATA_DIR=./data            # default
-CREDENTIAL_PROXY_PORT=3001 # default
+ANTHROPIC_API_KEY=...            # or CLAUDE_CODE_OAUTH_TOKEN — both work
+MAIN_CHAT_ID=...                 # auto-seeds allowed_users + allowed_chats on startup
+DATA_DIR=./data                  # default
+CREDENTIAL_PROXY_PORT=3001       # default
 ANTHROPIC_BASE_URL=https://api.anthropic.com  # default
 ```
+
+`ANTHROPIC_API_KEY` accepts any Anthropic token type (standard API keys and OAuth tokens). `CLAUDE_CODE_OAUTH_TOKEN` is an alias — same behavior.
 
 ## Startup sequence
 
 ```
 1. Init DB (run migrations if needed)
 2. Seed allowed_users/allowed_chats from MAIN_CHAT_ID if set
-3. Kill orphaned containers from previous run
+3. Kill AND remove all orphaned containers (both running and stopped)
 4. Reset orphaned sessions to "stopped" in DB
 5. Start credential proxy
 6. Start IPC watcher loop (1s interval)
 7. Start prune loop (5min interval)
 8. Start channels (Telegram, ...)
 ```
+
+Step 3 must remove stopped containers too (`docker rm`), not just kill running ones. Stale stopped containers block name reuse on next spawn.
 
 ## Shutdown (SIGTERM / SIGINT)
 
@@ -80,7 +84,7 @@ See `docs/components/telegram.md` for the Telegram implementation.
 - `kill(session_id)` — write `_close`, wait 10s, then force kill
 - `remove(session_id)` — remove stopped container, frees the name for reuse
 - `prune()` — every 5 min, remove containers in `stopped` state older than 30 min
-- On startup: find orphaned containers by name prefix, kill them
+- On startup: kill AND remove all containers matching the name prefix
 
 Container naming: `clawnim-{session_id}`
 
@@ -95,7 +99,7 @@ Per-session directory setup before first spawn:
 - Polls `data/ipc/*/output/` directories every 1s
 - Reads `.json` files, parses agent messages
 - Routes `type: "message"` to the originating channel for delivery
-- Routes `type: "done"` — forwards text to channel. Does NOT stop the session (agent stays alive for follow-ups)
+- Ignores `type: "done"` — does NOT forward text to user (already sent via `type: "message"`), does NOT stop the session
 - Deletes processed files
 - Moves unparseable files to `data/ipc/errors/`
 - Every ~10s, checks for dead containers: if a running session's container has exited, removes it and transitions session to `stopped`

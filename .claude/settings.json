@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "src_changed=$(git diff --name-only HEAD 2>/dev/null; git diff --name-only 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null) && src_hit=$(echo \"$src_changed\" | grep -c '^src/' || true) && docs_hit=$(echo \"$src_changed\" | grep -c '^docs/components/' || true) && if [ \"$src_hit\" -gt 0 ] && [ \"$docs_hit\" -eq 0 ]; then echo '{\"decision\":\"block\",\"reason\":\"src/ files were modified but docs/components/ specs were not updated. Update the relevant specification in docs/components/ to reflect the implementation changes before finishing.\"}'; fi",
+            "timeout": 10,
+            "statusMessage": "Checking spec sync..."
+          }
+        ]
+      }
+    ]
+  }
+}

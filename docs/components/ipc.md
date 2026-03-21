@@ -34,7 +34,7 @@ All JSON files written atomically: write to `.tmp`, then `rename`. Prevents read
 
 ### Orchestrator -> Agent (`input/`)
 
-**Initial input** — mounted as `/tmp/input.json` (not via stdin, detached containers cannot receive piped stdin):
+**Initial input** — mounted as a file, not via stdin (detached containers cannot receive piped stdin):
 ```json
 {
   "prompt": "Fix the failing test in auth module",
@@ -86,7 +86,7 @@ Agent must exit gracefully upon detecting this file.
 
 - `type: "message"` — intermediate update, forwarded to user immediately.
 - `type: "done"` — current query finished. **Does not mean the container should stop.** The agent stays alive, polling `input/` for follow-up messages. The orchestrator must NOT transition the session to `stopped` on `done`.
-- Session transitions to `stopped` only when the container process actually exits. Orchestrator detects this by periodically checking container status (`docker inspect`).
+- Session transitions to `stopped` only when the container process actually exits. Orchestrator detects this by periodically checking container status.
 
 ## Polling
 
@@ -103,6 +103,6 @@ Agent must exit gracefully upon detecting this file.
 
 ## Dead container detection
 
-Orchestrator periodically checks (every ~10s) if running sessions still have a live container (`docker inspect`). If the container has exited:
-1. Remove the container (`docker rm`) so the name can be reused.
+Orchestrator periodically checks (every ~10s) if running sessions still have a live container. If the container has exited:
+1. Remove the container so the name can be reused.
 2. Transition session to `stopped`.
